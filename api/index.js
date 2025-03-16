@@ -22,6 +22,7 @@ async function connectToDatabase() {
         const client = new MongoClient(uri, options);
         await client.connect();
         
+        // Change this to your actual database name
         const db = client.db("test");
         
         cachedClient = client;
@@ -34,20 +35,25 @@ async function connectToDatabase() {
     }
 }
 
-const setCorsHeaders = (res) => {
-    res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-};
-
 export default async function handler(req, res) {
-    setCorsHeaders(res);
+    // Set CORS headers
+    const headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "OPTIONS,POST,GET"
+    };
     
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
+    // Apply CORS headers to response
+    Object.entries(headers).forEach(([key, value]) => {
+        res.setHeader(key, value);
+    });
+    
+    // Handle preflight OPTIONS request
+    if (req.method === "OPTIONS") {
+        return res.status(204).end();
     }
-
+    
+    // Handle GET request - status check
     if (req.method === "GET") {
         return res.status(200).json({ 
             message: "License API is running",
@@ -56,90 +62,86 @@ export default async function handler(req, res) {
         });
     }
     
+    // Handle POST request for license validation
     if (req.method === "POST") {
-        try {
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('MongoDB operation timed out')), 8000)
-            );
-            
-            const licensePromise = processLicenseRequest(req, res);
-            
-            await Promise.race([licensePromise, timeoutPromise]);
-            
-            return;
-        } catch (error) {
-            console.error("Request processing error:", error);
-            return res.status(500).json({ 
-                message: "Error processing request", 
-                error: error.message 
-            });
+        let requestBody = req.body;
+        
+        // Parse JSON if needed (depends on how Vercel handles body parsing)
+        if (typeof requestBody === 'string') {
+            try {
+                requestBody = JSON.parse(requestBody);
+            } catch (error) {
+                return res.status(400).json({ message: "Body is not valid JSON." });
+            }
+        }
+        
+        const { licenseKey, deviceId, action = 'validate' } = requestBody || {};
+        
+        // Validate required fields
+        if (!licenseKey || !deviceId) {
+            return res.status(400).json({ message: "License key or device ID is missing." });
+        }
+        
+        // Process license validation
+        if (action === 'validate') {
+            return await validateLicense(licenseKey, deviceId, res);
+        } else {
+            return res.status(400).json({ message: "Action is not recognized." });
         }
     }
     
+    // Reject other HTTP methods
     return res.status(405).json({ message: "Method Not Allowed" });
 }
 
-async function processLicenseRequest(req, res) {
-    const { licenseKey, deviceId, action = "validate" } = req.body || {};
-    
-    if (!licenseKey || !deviceId) {
-        return res.status(400).json({ message: "License key or device ID is missing." });
-    }
-
-    if (action === "validate") {
-        return await validateLicense(licenseKey, deviceId, res);
-    } else {
-        return res.status(400).json({ message: "Action not recognized." });
-    }
-}
-
 async function validateLicense(licenseKey, deviceId, res) {
+    const normalizedLicenseKey = licenseKey.toLowerCase();
+    const currentDate = new Date().toISOString().split('T')[0];
+    
     try {
-        console.log("Connecting to database...");
+        // Connect to database
         const { db } = await connectToDatabase();
-        console.log("Connected to database");
         
+        // Get licenses collection
         const licenses = db.collection("licenses");
-
-        const normalizedLicenseKey = licenseKey.toLowerCase();
-        const currentDate = new Date().toISOString().split("T")[0];
-
-        console.log(`Finding license: ${normalizedLicenseKey}`);
+        
+        // Find license by key
         const license = await licenses.findOne({ key: normalizedLicenseKey });
-        console.log("License found:", license ? "Yes" : "No");
-
-        if (!license) {
-            return res.status(400).json({ message: "License not found." });
+        
+        // Automatically set isActive to false if the license has expired
+        let isActive = license && currentDate <= license.expiryDate;
+        
+        // Check if the license does not exist, has expired, or is already used on another device
+        if (!license || !isActive || (license.isUsed && license.deviceId !== deviceId)) {
+            const message = !license ? "License is not valid for use." :
+                (!isActive ? "License has expired." : "License is already in use on another device.");
+            return res.status(400).json({ message });
         }
-
-        let isActive = currentDate <= license.expiryDate;
-
-        if (!isActive || (license.isUsed && license.deviceId !== deviceId)) {
-            return res.status(400).json({
-                message: isActive ? "License is already in use." : "License has expired."
-            });
-        }
-
-        console.log("Updating license...");
+        
+        // Proceed to mark the license as used and associate it with the deviceId
         await licenses.updateOne(
             { key: normalizedLicenseKey },
-            { $set: { isUsed: true, deviceId, isActive } }
+            { 
+                $set: { 
+                    isUsed: true, 
+                    deviceId: deviceId, 
+                    isActive: isActive 
+                }
+            }
         );
-        console.log("License updated");
-
-        return res.status(200).json({
-            success: true,
-            message: "License validated and associated with the device.",
-            deviceId,
-            clientName: license.clientName,
-            expiryDate: license.expiryDate,
-            isActive
+        
+        // Return success response
+        return res.status(200).json({ 
+            success: true, 
+            message: "License has been validated and associated with the device.", 
+            deviceId: deviceId, 
+            clientName: license.clientName, 
+            expiryDate: license.expiryDate, 
+            isActive 
         });
+        
     } catch (error) {
-        console.error("Error in validateLicense:", error);
-        return res.status(500).json({ 
-            message: "Error validating license", 
-            error: error.message 
-        });
+        console.error("Error validating and updating license: ", error);
+        return res.status(500).json({ message: "Internal server error." });
     }
 }
