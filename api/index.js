@@ -4,7 +4,6 @@ let cachedClient = null;
 let cachedDb = null;
 
 async function connectToDatabase() {
-    // Your existing database connection code...
     const uri = process.env.MONGO_URI;
     
     if (!uri) {
@@ -35,26 +34,20 @@ async function connectToDatabase() {
     }
 }
 
-// Helper function to set CORS headers
 const setCorsHeaders = (res) => {
     res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*'); // Allow any origin
-    // If you want to restrict to specific origins:
-    // res.setHeader('Access-Control-Allow-Origin', 'https://yourdomain.com');
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 };
 
 export default async function handler(req, res) {
-    // Set CORS headers for all requests
     setCorsHeaders(res);
     
-    // Handle preflight OPTIONS request
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
-    // Your existing API handler code
     if (req.method === "GET") {
         return res.status(200).json({ 
             message: "License API is running",
@@ -86,9 +79,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ message: "Method Not Allowed" });
 }
 
-// Your existing helper functions
 async function processLicenseRequest(req, res) {
-    // ...existing code
     const { licenseKey, deviceId, action = "validate" } = req.body || {};
     
     if (!licenseKey || !deviceId) {
@@ -103,7 +94,6 @@ async function processLicenseRequest(req, res) {
 }
 
 async function validateLicense(licenseKey, deviceId, res) {
-    // ...existing code
     try {
         console.log("Connecting to database...");
         const { db } = await connectToDatabase();
