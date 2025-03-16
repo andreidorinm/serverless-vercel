@@ -15,7 +15,8 @@ async function connectToDatabase() {
     }
 
     const options = {
-        useUnifiedTopology: true
+        useUnifiedTopology: true,
+        maxPoolSize: 10  
     };
 
     try {
@@ -134,18 +135,6 @@ async function validateLicense(licenseKey, deviceId, res) {
         console.log("Connected to MongoDB successfully");
         
         const licenses = db.collection("licenses");
-        
-        const collections = await db.listCollections().toArray();
-        console.log("Available collections:", collections.map(c => c.name));
-        
-        const count = await licenses.countDocuments();
-        console.log(`Found ${count} licenses in collection`);
-        
-        if (count > 0) {
-            const sampleLicense = await licenses.findOne({});
-            console.log("Sample license structure:", JSON.stringify(sampleLicense, null, 2));
-            console.log("Available fields:", Object.keys(sampleLicense || {}));
-        }
         
         console.log("Finding license in database with key:", normalizedLicenseKey);
         const license = await licenses.findOne({ key: normalizedLicenseKey });
