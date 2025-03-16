@@ -1,15 +1,15 @@
 {
-    "name": "vercel-serverless",
-    "version": "1.0.0",
-    "description": "License validation API",
-    "scripts": {
-      "dev": "vercel dev",
-      "deploy": "vercel deploy --prod"
-    },
-    "dependencies": {
-      "mongodb": "^5.0.0"
-    },
-    "devDependencies": {
-      "vercel": "^latest"
-    }
+  "name": "vercel-serverless",
+  "version": "1.0.0",
+  "description": "License validation API",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel deploy --prod"
+  },
+  "dependencies": {
+    "mongodb": "^5.0.0"
+  },
+  "devDependencies": {
+    "vercel": "latest"
   }
+}
