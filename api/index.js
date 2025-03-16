@@ -1,17 +1,15 @@
 import { MongoClient } from "mongodb";
 
-// Connection caching for serverless functions
 let cachedClient = null;
 let cachedDb = null;
 
 async function connectToDatabase() {
     const uri = process.env.MONGO_URI;
-    
+
     if (!uri) {
         throw new Error("MONGO_URI environment variable not set");
     }
 
-    // Use cached connection if available
     if (cachedClient && cachedDb) {
         return { client: cachedClient, db: cachedDb };
     }
@@ -19,13 +17,12 @@ async function connectToDatabase() {
     try {
         const client = new MongoClient(uri);
         await client.connect();
-        
+
         const db = client.db("test");
-        
-        // Cache the connection
+
         cachedClient = client;
         cachedDb = db;
-        
+
         return { client, db };
     } catch (error) {
         console.error("MongoDB connection error:", error);
@@ -34,31 +31,37 @@ async function connectToDatabase() {
 }
 
 export default async function handler(req, res) {
-    // Vercel automatically parses JSON bodies
-    if (req.method !== "POST") {
-        return res.status(405).json({ message: "Method Not Allowed" });
-    }
-
-    // Use req.body directly without parsing
-    const { licenseKey, deviceId, action = "validate" } = req.body || {};
-    
-    if (!licenseKey || !deviceId) {
-        return res.status(400).json({ message: "License key or device ID is missing." });
-    }
-
-    try {
-        if (action === "validate") {
-            return await validateLicense(licenseKey, deviceId, res);
-        } else {
-            return res.status(400).json({ message: "Action not recognized." });
-        }
-    } catch (error) {
-        console.error("Error processing request:", error);
-        return res.status(500).json({ 
-            message: "Internal server error.", 
-            error: error.message 
+    if (req.method === "GET") {
+        return res.status(200).json({
+            message: "License API is running",
+            status: "online",
+            timestamp: new Date().toISOString()
         });
     }
+
+    if (req.method === "POST") {
+        const { licenseKey, deviceId, action = "validate" } = req.body || {};
+
+        if (!licenseKey || !deviceId) {
+            return res.status(400).json({ message: "License key or device ID is missing." });
+        }
+
+        try {
+            if (action === "validate") {
+                return await validateLicense(licenseKey, deviceId, res);
+            } else {
+                return res.status(400).json({ message: "Action not recognized." });
+            }
+        } catch (error) {
+            console.error("Error processing request:", error);
+            return res.status(500).json({
+                message: "Internal server error.",
+                error: error.message
+            });
+        }
+    }
+
+    return res.status(405).json({ message: "Method Not Allowed" });
 }
 
 async function validateLicense(licenseKey, deviceId, res) {
@@ -70,7 +73,7 @@ async function validateLicense(licenseKey, deviceId, res) {
         const currentDate = new Date().toISOString().split("T")[0];
 
         console.log(`Validating license: ${normalizedLicenseKey} for device: ${deviceId}`);
-        
+
         const license = await licenses.findOne({ key: normalizedLicenseKey });
         console.log("License found:", license ? "Yes" : "No");
 
@@ -102,9 +105,9 @@ async function validateLicense(licenseKey, deviceId, res) {
         });
     } catch (error) {
         console.error("Error in validateLicense:", error);
-        return res.status(500).json({ 
-            message: "Error validating license", 
-            error: error.message 
+        return res.status(500).json({
+            message: "Error validating license",
+            error: error.message
         });
     }
 }
