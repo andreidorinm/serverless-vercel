@@ -22,8 +22,8 @@ async function connectToDatabase() {
         const client = new MongoClient(uri, options);
         await client.connect();
         
-        // Change this to your actual database name
-        const db = client.db("test");
+        // Use the correct database name - clarfactura
+        const db = client.db("clarfactura");
         
         cachedClient = client;
         cachedDb = db;
@@ -149,8 +149,23 @@ async function validateLicense(licenseKey, deviceId, res) {
         // Get licenses collection
         const licenses = db.collection("licenses");
         
+        // Debug: List all collections in the database
+        const collections = await db.listCollections().toArray();
+        console.log("Available collections:", collections.map(c => c.name));
+        
+        // Debug: Count documents in licenses collection
+        const count = await licenses.countDocuments();
+        console.log(`Found ${count} licenses in collection`);
+        
+        // Debug: Sample first license to check structure (if any exist)
+        if (count > 0) {
+            const sampleLicense = await licenses.findOne({});
+            console.log("Sample license structure:", JSON.stringify(sampleLicense, null, 2));
+            console.log("Available fields:", Object.keys(sampleLicense || {}));
+        }
+        
         // Find license by key
-        console.log("Finding license in database...");
+        console.log("Finding license in database with key:", normalizedLicenseKey);
         const license = await licenses.findOne({ key: normalizedLicenseKey });
         console.log("License found:", license ? "Yes" : "No");
         
