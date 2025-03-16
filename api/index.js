@@ -22,7 +22,6 @@ async function connectToDatabase() {
         const client = new MongoClient(uri, options);
         await client.connect();
         
-        // Use the correct database name - clarfactura
         const db = client.db("clarfactura");
         
         cachedClient = client;
@@ -36,17 +35,14 @@ async function connectToDatabase() {
 }
 
 export default async function handler(req, res) {
-    // Set CORS headers - matching exactly what the frontend expects
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
     res.setHeader('Access-Control-Allow-Methods', 'OPTIONS,POST,GET');
     
-    // Handle preflight OPTIONS request
     if (req.method === "OPTIONS") {
         return res.status(204).end();
     }
     
-    // Handle GET request - status check
     if (req.method === "GET") {
         return res.status(200).json({ 
             success: true,
@@ -56,15 +52,12 @@ export default async function handler(req, res) {
         });
     }
     
-    // Handle POST request for license validation
     if (req.method === "POST") {
         try {
             let requestBody = req.body;
             
-            // Debug logging
             console.log("Request body received:", JSON.stringify(requestBody));
             
-            // Parse JSON if needed (Vercel sometimes doesn't auto-parse)
             if (typeof requestBody === 'string') {
                 try {
                     requestBody = JSON.parse(requestBody);
@@ -77,7 +70,6 @@ export default async function handler(req, res) {
                 }
             }
             
-            // Handle empty body
             if (!requestBody) {
                 console.error("Empty request body");
                 return res.status(400).json({ 
@@ -88,10 +80,8 @@ export default async function handler(req, res) {
             
             const { licenseKey, deviceId, action = 'validate' } = requestBody;
             
-            // Debug logging
             console.log("Extracted values:", { licenseKey, deviceId, action });
             
-            // Validate required fields
             if (!licenseKey || !deviceId) {
                 const missingFields = [];
                 if (!licenseKey) missingFields.push("licenseKey");
@@ -104,7 +94,6 @@ export default async function handler(req, res) {
                 });
             }
             
-            // Process license validation
             if (action === 'validate') {
                 return await validateLicense(licenseKey, deviceId, res);
             } else {
@@ -122,7 +111,6 @@ export default async function handler(req, res) {
         }
     }
     
-    // Reject other HTTP methods
     return res.status(405).json({ 
         success: false, 
         message: "Method Not Allowed" 
@@ -136,7 +124,6 @@ async function validateLicense(licenseKey, deviceId, res) {
     console.log(`Validating license: ${normalizedLicenseKey} for device: ${deviceId}`);
     
     try {
-        // Connect to database with timeout handling
         console.log("Connecting to MongoDB...");
         const dbPromise = connectToDatabase();
         const timeoutPromise = new Promise((_, reject) => 
@@ -146,30 +133,24 @@ async function validateLicense(licenseKey, deviceId, res) {
         const { db } = await Promise.race([dbPromise, timeoutPromise]);
         console.log("Connected to MongoDB successfully");
         
-        // Get licenses collection
         const licenses = db.collection("licenses");
         
-        // Debug: List all collections in the database
         const collections = await db.listCollections().toArray();
         console.log("Available collections:", collections.map(c => c.name));
         
-        // Debug: Count documents in licenses collection
         const count = await licenses.countDocuments();
         console.log(`Found ${count} licenses in collection`);
         
-        // Debug: Sample first license to check structure (if any exist)
         if (count > 0) {
             const sampleLicense = await licenses.findOne({});
             console.log("Sample license structure:", JSON.stringify(sampleLicense, null, 2));
             console.log("Available fields:", Object.keys(sampleLicense || {}));
         }
         
-        // Find license by key
         console.log("Finding license in database with key:", normalizedLicenseKey);
         const license = await licenses.findOne({ key: normalizedLicenseKey });
         console.log("License found:", license ? "Yes" : "No");
         
-        // If license doesn't exist
         if (!license) {
             console.log("License not found in database");
             return res.status(400).json({ 
@@ -178,7 +159,6 @@ async function validateLicense(licenseKey, deviceId, res) {
             });
         }
         
-        // Check if license has expired
         let isActive = currentDate <= license.expiryDate;
         console.log("License active status:", isActive, "Expiry date:", license.expiryDate);
         
@@ -190,7 +170,6 @@ async function validateLicense(licenseKey, deviceId, res) {
             });
         }
         
-        // Check if license is already used on a different device
         if (license.isUsed && license.deviceId !== deviceId) {
             console.log("License already in use on device:", license.deviceId);
             return res.status(400).json({ 
@@ -199,7 +178,6 @@ async function validateLicense(licenseKey, deviceId, res) {
             });
         }
         
-        // Proceed to mark the license as used and associate it with the deviceId
         console.log("Updating license with device ID:", deviceId);
         await licenses.updateOne(
             { key: normalizedLicenseKey },
@@ -215,7 +193,6 @@ async function validateLicense(licenseKey, deviceId, res) {
         
         console.log("License validation successful");
         
-        // Return success response that matches what the frontend expects
         return res.status(200).json({ 
             success: true, 
             message: "License has been validated and associated with the device.", 
