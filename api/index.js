@@ -1,8 +1,6 @@
 import { MongoClient } from "mongodb";
 
-let cachedClient = null;
-let cachedDb = null;
-
+// No cached connection - create a new connection for each request
 async function connectToDatabase() {
     const uri = process.env.MONGO_URI;
     
@@ -10,24 +8,10 @@ async function connectToDatabase() {
         throw new Error("MONGO_URI environment variable not set");
     }
 
-    if (cachedClient && cachedDb) {
-        return { client: cachedClient, db: cachedDb };
-    }
-
-    const options = {
-        useUnifiedTopology: true,
-        maxPoolSize: 10  
-    };
-
     try {
-        const client = new MongoClient(uri, options);
+        const client = new MongoClient(uri, { useUnifiedTopology: true });
         await client.connect();
-        
         const db = client.db("clarfactura");
-        
-        cachedClient = client;
-        cachedDb = db;
-        
         return { client, db };
     } catch (error) {
         console.error("MongoDB connection error:", error);
@@ -36,14 +20,24 @@ async function connectToDatabase() {
 }
 
 export default async function handler(req, res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
-    res.setHeader('Access-Control-Allow-Methods', 'OPTIONS,POST,GET');
+    // Set CORS headers - matching exactly with original DynamoDB implementation
+    const headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "OPTIONS,POST,GET"
+    };
     
+    // Apply CORS headers to response
+    Object.entries(headers).forEach(([key, value]) => {
+        res.setHeader(key, value);
+    });
+    
+    // Handle preflight OPTIONS request
     if (req.method === "OPTIONS") {
         return res.status(204).end();
     }
     
+    // Handle GET request
     if (req.method === "GET") {
         return res.status(200).json({ 
             success: true,
@@ -53,149 +47,109 @@ export default async function handler(req, res) {
         });
     }
     
+    // Handle POST request for license validation - matching original logic exactly
     if (req.method === "POST") {
-        try {
-            let requestBody = req.body;
-            
-            console.log("Request body received:", JSON.stringify(requestBody));
-            
-            if (typeof requestBody === 'string') {
-                try {
-                    requestBody = JSON.parse(requestBody);
-                } catch (error) {
-                    console.error("JSON parsing error:", error);
-                    return res.status(400).json({ 
-                        success: false, 
-                        message: "Body is not valid JSON." 
-                    });
-                }
+        let requestBody = req.body;
+        
+        // Parse JSON if needed
+        if (typeof requestBody === 'string') {
+            try {
+                requestBody = JSON.parse(requestBody);
+            } catch (error) {
+                return res.status(400).json({ message: "Body is not valid JSON." });
             }
-            
-            if (!requestBody) {
-                console.error("Empty request body");
-                return res.status(400).json({ 
-                    success: false, 
-                    message: "Request body is empty." 
-                });
-            }
-            
-            const { licenseKey, deviceId, action = 'validate' } = requestBody;
-            
-            console.log("Extracted values:", { licenseKey, deviceId, action });
-            
-            if (!licenseKey || !deviceId) {
-                const missingFields = [];
-                if (!licenseKey) missingFields.push("licenseKey");
-                if (!deviceId) missingFields.push("deviceId");
-                
-                console.error("Missing required fields:", missingFields);
-                return res.status(400).json({ 
-                    success: false, 
-                    message: `Required fields missing: ${missingFields.join(", ")}` 
-                });
-            }
-            
-            if (action === 'validate') {
-                return await validateLicense(licenseKey, deviceId, res);
-            } else {
-                return res.status(400).json({ 
-                    success: false, 
-                    message: "Action is not recognized." 
-                });
-            }
-        } catch (error) {
-            console.error("Unexpected error processing request:", error);
-            return res.status(500).json({ 
-                success: false, 
-                message: "An unexpected error occurred." 
-            });
+        }
+        
+        const { licenseKey, deviceId, action = 'validate' } = requestBody || {};
+        
+        // Validate required fields - exact same check as DynamoDB
+        if (!licenseKey || !deviceId) {
+            return res.status(400).json({ message: "License key or device ID is missing." });
+        }
+        
+        // Process license validation
+        if (action === 'validate') {
+            const result = await validateLicense(licenseKey, deviceId);
+            return res.status(result.statusCode).json(JSON.parse(result.body));
+        } else {
+            return res.status(400).json({ message: "Action is not recognized." });
         }
     }
     
-    return res.status(405).json({ 
-        success: false, 
-        message: "Method Not Allowed" 
-    });
+    // Reject other HTTP methods
+    return res.status(405).json({ message: "Method Not Allowed" });
 }
 
-async function validateLicense(licenseKey, deviceId, res) {
+// Function rewritten to match DynamoDB implementation exactly
+async function validateLicense(licenseKey, deviceId) {
+    const headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "OPTIONS,POST,GET"
+    };
+    
     const normalizedLicenseKey = licenseKey.toLowerCase();
     const currentDate = new Date().toISOString().split('T')[0];
     
-    console.log(`Validating license: ${normalizedLicenseKey} for device: ${deviceId}`);
-    
     try {
-        console.log("Connecting to MongoDB...");
-        const dbPromise = connectToDatabase();
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('MongoDB connection timed out')), 5000)
-        );
+        // Create a new connection for each request (no caching)
+        const { client, db } = await connectToDatabase();
         
-        const { db } = await Promise.race([dbPromise, timeoutPromise]);
-        console.log("Connected to MongoDB successfully");
-        
-        const licenses = db.collection("licenses");
-        
-        console.log("Finding license in database with key:", normalizedLicenseKey);
-        const license = await licenses.findOne({ key: normalizedLicenseKey });
-        console.log("License found:", license ? "Yes" : "No");
-        
-        if (!license) {
-            console.log("License not found in database");
-            return res.status(400).json({ 
-                success: false, 
-                message: "License is not valid for use." 
-            });
-        }
-        
-        let isActive = currentDate <= license.expiryDate;
-        console.log("License active status:", isActive, "Expiry date:", license.expiryDate);
-        
-        if (!isActive) {
-            console.log("License has expired");
-            return res.status(400).json({ 
-                success: false, 
-                message: "License has expired." 
-            });
-        }
-        
-        if (license.isUsed && license.deviceId !== deviceId) {
-            console.log("License already in use on device:", license.deviceId);
-            return res.status(400).json({ 
-                success: false, 
-                message: "License is already in use on another device." 
-            });
-        }
-        
-        console.log("Updating license with device ID:", deviceId);
-        await licenses.updateOne(
-            { key: normalizedLicenseKey },
-            { 
-                $set: { 
-                    isUsed: true, 
-                    deviceId: deviceId, 
-                    isActive: isActive,
-                    lastValidated: new Date().toISOString()
-                }
+        try {
+            const licenses = db.collection("licenses");
+            
+            // Find license by key - equivalent to GetCommand
+            const license = await licenses.findOne({ key: normalizedLicenseKey });
+            
+            // Automatically set isActive to false if the license has expired
+            let isActive = license && currentDate <= license.expiryDate;
+            
+            // Combined check exactly matching the DynamoDB implementation
+            if (!license || !isActive || (license.isUsed && license.deviceId !== deviceId)) {
+                const message = !license ? "License is not valid for use." :
+                    (!isActive ? "License has expired." : "License is already in use on another device.");
+                return { 
+                    statusCode: 400, 
+                    headers, 
+                    body: JSON.stringify({ message }) 
+                };
             }
-        );
-        
-        console.log("License validation successful");
-        
-        return res.status(200).json({ 
-            success: true, 
-            message: "License has been validated and associated with the device.", 
-            deviceId: deviceId, 
-            clientName: license.clientName, 
-            expiryDate: license.expiryDate, 
-            isActive 
-        });
-        
+            
+            // Update license - exactly matching DynamoDB update
+            await licenses.updateOne(
+                { key: normalizedLicenseKey },
+                { 
+                    $set: { 
+                        isUsed: true, 
+                        deviceId: deviceId, 
+                        isActive: isActive 
+                    }
+                }
+            );
+            
+            // Format response exactly like DynamoDB implementation
+            return { 
+                statusCode: 200, 
+                headers, 
+                body: JSON.stringify({ 
+                    success: true, 
+                    message: "License has been validated and associated with the device.", 
+                    deviceId: deviceId, 
+                    clientName: license.clientName, 
+                    expiryDate: license.expiryDate, 
+                    isActive 
+                }) 
+            };
+        } finally {
+            // Always close the connection
+            await client.close();
+        }
     } catch (error) {
         console.error("Error validating and updating license: ", error);
-        return res.status(500).json({ 
-            success: false, 
-            message: "Internal server error during license validation." 
-        });
+        return { 
+            statusCode: 500, 
+            headers, 
+            body: JSON.stringify({ message: "Internal server error." }) 
+        };
     }
 }
